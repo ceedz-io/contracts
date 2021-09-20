@@ -137,6 +137,7 @@ contract SeedContract is ERC721Enumerable {
     
     function burn(uint256 tokenId) public {
         require(ownerOf(tokenId)==msg.sender);
+        _nrg.mint(msg.sender,nrgYield(tokenId));
     }
     
     function _mintSeed(uint256 tokenId) private {
@@ -144,7 +145,7 @@ contract SeedContract is ERC721Enumerable {
         require(_numSeeds>0,"No seeds");
         uint256 seedID = _newSeed(tokenId);
         _numPollinations[tokenId] = _numSeeds-1;
-        _safeMint(msg.sender, tokenId);
+        _safeMint(msg.sender, seedID);
     }
     
     function _rnd() private view returns (uint256){
