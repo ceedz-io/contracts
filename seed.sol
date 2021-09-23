@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "./nrg.sol";
 import "./nectar.sol";
+import "./fruit.sol";
 import "solidity-bytes-utils/contracts/BytesLib.sol";
 
 contract SeedContract is ERC721Enumerable {
@@ -11,9 +12,12 @@ contract SeedContract is ERC721Enumerable {
     string private _baseUri;
     NRG private _nrg;
     Nectar private _nectar;
+    Fruit private _fruit;
     
     mapping(uint256 => uint256) private _plantDate;
     mapping(uint256 => uint256) private _numPollinations;
+    mapping(uint256 => bytes32) private _typeName;
+    mapping(bytes32 => uint256) private _nameType;
     
     struct Seed {
         uint256 idx;
@@ -32,8 +36,11 @@ contract SeedContract is ERC721Enumerable {
        //uint256 genesis = 0xffee222222221111111111111111111111111111111111111111111111111111
        _safeMint(msg.sender, genesis);
        _nrg = new NRG();
-       _nectar = new Nectar(address(_nrg));
-       _nrg.addMinter(address(_nectar));
+       address _nrgAddress = address(_nrg);
+       _nectar = new Nectar(_nrgAddress);
+       _nrg.addMinter(_nrgAddress);
+       _fruit = new Fruit(_nrgAddress);
+       _nrg.addMinter(_nrgAddress);
     }
     
     function nrg() public view returns (NRG){
@@ -92,22 +99,35 @@ contract SeedContract is ERC721Enumerable {
         uint32 x = 123;
     }
     */
-    
+    function daysSincePlantDate(uint256 tokenId) public view returns (uint256){
+        uint256 _daysSincePlantDate = 0;
+        if(_plantDate[tokenId]>0){
+            _daysSincePlantDate = (block.timestamp - _plantDate[tokenId])/(1 days);
+        }
+        return _daysSincePlantDate;
+    }
 
     function info(uint256 tokenId) public view returns (Seed memory){
         require(ownerOf(tokenId)!=address(0));
-        uint256 daysSincePlantDate = 0;
-        if(_plantDate[tokenId]>0){
-            daysSincePlantDate = (block.timestamp - _plantDate[tokenId])/(1 days);
-        }
+        
         return Seed({
             idx: uint256(_bytesAt(tokenId,24,4).toUint32(0)),
             parentIdx: uint256(_bytesAt(tokenId,20,4).toUint32(0)),
-            daysSincePlantDate: daysSincePlantDate,
+            daysSincePlantDate: daysSincePlantDate(tokenId),
             timeToPollination: uint256(_bytesAt(tokenId,28,1).toUint8(0)),
             pollinationWindow: uint256(_bytesAt(tokenId,29,1).toUint8(0)),
             maturationWindow: uint256(_bytesAt(tokenId,30,1).toUint8(0))
         });
+    }
+    
+    function seedType(uint256 tokenId) public pure returns (uint256){
+        bytes memory seedIDBytes = abi.encodePacked(tokenId);
+        bytes memory _seedType = seedIDBytes.slice(28,4);
+        return uint256(_seedType.toUint64(0));
+    }
+    
+    function seedType(bytes32 name) public view returns (uint256){
+        return _nameType[name];
     }
     
     function maxSeeds(uint256 tokenId) public view returns (uint256){
@@ -124,10 +144,35 @@ contract SeedContract is ERC721Enumerable {
         _nectar.mint(msg.sender,1e14);
     }
     
+    function setName(uint256 tokenId,bytes32 name) public {
+        uint256 _seedType = seedType(tokenId);
+        require(_typeName[_seedType]==0,"Already exists");
+        require(_nameType[name]==0,"Already exists");
+        require(ownerOf(tokenId)==msg.sender,"Not owner");
+        _typeName[_seedType] = name;
+        _nameType[name] = _seedType;
+    }
+    
+    function getTypeName(uint256 tokenId) public view returns (bytes32){
+        return _typeName[seedType(tokenId)];
+    }
+    
     function consume(uint256 tokenId) public {
-        require(ownerOf(tokenId)==msg.sender);
+        require(ownerOf(tokenId)==msg.sender,"Not owner");
         _mintSeed(tokenId);
         _nrg.mint(msg.sender,nrgYield(tokenId));
+    }
+    
+    function harvest(uint256 tokenId) public {
+        require(ownerOf(tokenId)==msg.sender);
+        uint256 _numSeeds = _numPollinations[tokenId];
+        require(_numSeeds>0,"No seeds");
+        uint256 seedID = _newSeed(tokenId);
+        
+        _numPollinations[tokenId] = _numSeeds-1;
+        _safeMint(address(_fruit), seedID);
+        _fruit.mint(tokenId,msg.sender);
+        
     }
     
     function pickSeed(uint256 tokenId) public {
@@ -137,9 +182,9 @@ contract SeedContract is ERC721Enumerable {
     
     function burn(uint256 tokenId) public {
         require(ownerOf(tokenId)==msg.sender);
-        _nrg.mint(msg.sender,nrgYield(tokenId));
+        _burn(tokenId);
     }
-    
+     
     function _mintSeed(uint256 tokenId) private {
         uint256 _numSeeds = _numPollinations[tokenId];
         require(_numSeeds>0,"No seeds");
